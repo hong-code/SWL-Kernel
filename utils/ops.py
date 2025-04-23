@@ -177,7 +177,7 @@ def load_data(dataset, degree_as_tag):
         g_list = []
         label_dict = {}
         feat_dict = {}
-        with open('dataset/%s/%s.txt' % (dataset, dataset), 'r') as f:
+        with open('/home/ycy/MSSM-GNN/dataset/%s/%s.txt' % (dataset, dataset), 'r') as f:
             n_g = int(f.readline().strip())
             for i in range(n_g):
                 row = f.readline().strip().split()

@@ -1,3 +1,5 @@
+import os
+os.environ['DGL_DISABLE_GRAPHBOLT'] = '1'
 from networkx.generators.random_graphs import barabasi_albert_graph
 from tqdm import tqdm
 import pickle
@@ -9,7 +11,6 @@ import torch
 from utils.data_loader import FileLoader
 from utils.ops import GenGraph
 from utils.ops import load_data
-
 
 #得到数据集属性
 def get_args():
@@ -89,5 +90,5 @@ norm[torch.isinf(norm)] = 0
 g_dgl.ndata['norm'] = norm.unsqueeze(1)
 print(g_dgl.edges()[0].size())
 
-with open('preprocessed_datasets/' + args.data, 'wb') as save_file:
+with open('/home/ycy/MSSM-GNN/preprocessed_datasets/' + args.data, 'wb') as save_file:
     pickle.dump(g_dgl, save_file)

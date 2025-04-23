@@ -1,3 +1,5 @@
+import os
+os.environ['DGL_DISABLE_GRAPHBOLT'] = '1'
 from networkx.classes.function import number_of_edges
 from networkx.generators.random_graphs import barabasi_albert_graph
 import numpy as np
@@ -171,7 +173,7 @@ def main():
         number_of_graphs = 4110
     elif args.data == 'Mutagenicity':#标签是0和1
         number_of_graphs = 4337
-    with open('preprocessed_datasets/' + args.data, 'rb') as input_file:
+    with open('/home/ycy/MSSM-GNN/preprocessed_datasets/' + args.data, 'rb') as input_file:
         g = pickle.load(input_file)
     num_cliques = int(g.number_of_nodes()) - number_of_graphs
     labels = g.ndata['labels']
@@ -180,7 +182,7 @@ def main():
     edge_weight = g.edata['edge_weight'].to(device)
     g = g.to(device)
     node_features = features.to(device)
-    labels.to(device)
+    labels =  labels.to(device)
     graphs, num_classes = load_data(args.data, args.degree_as_tag)
     print(len(graphs))
     max_val = 0
@@ -195,7 +197,8 @@ def main():
             torch.cuda.manual_seed(seed)
             torch.backends.cudnn.benchmark = False
             torch.backends.cudnn.deterministic = True
-        train_idx, valid_idx = sep_data(labels[:number_of_graphs], seed)
+        # train_idx, valid_idx = sep_data(labels[:number_of_graphs], seed)
+        train_idx, valid_idx = sep_data(labels[:number_of_graphs].cpu().numpy(), seed)
         for i in range(10):
             train_index = train_idx[i]
             valid_index = valid_idx[i]
@@ -211,7 +214,7 @@ def main():
             val_nid = torch.nonzero(valid_mask, as_tuple=True)[0].to(device)
             g = g.to(device)
             sampler = dgl.dataloading.MultiLayerFullNeighborSampler(3)
-            dataloader = dgl.dataloading.NodeDataLoader(
+            dataloader = dgl.dataloading.DataLoader(
                 g,
                 train_nid,
                 sampler,
@@ -221,7 +224,7 @@ def main():
                 drop_last=False,
                 num_workers=args.num_workers
             )
-            val_dataloader = dgl.dataloading.NodeDataLoader(
+            val_dataloader = dgl.dataloading.DataLoader(
                 g,
                 val_nid,
                 sampler,

@@ -16,30 +16,30 @@ class FileLoader(object):
 
     def load_data(self):
         data = self.args.data
-        with open('dataset/%s/A.txt' % (data), 'r') as f:
+        with open('/home/ycy/MSSM-GNN/dataset/%s/A.txt' % (data), 'r') as f:
             edges = f.read().splitlines()
 
         edges = [tuple(map(int, e.replace(" ", "").split(","))) for e in edges]
         print("edges", len(edges))
 
-        with open('dataset/%s/graph_indicator.txt' % (data), 'r') as f:
+        with open('/home/ycy/MSSM-GNN/dataset/%s/graph_indicator.txt' % (data), 'r') as f:
             g = f.readlines()
         g = [int(i) for i in g]
         print("g", len(g))
 
         weights = []
         if self.args.edge_weight:
-            with open('dataset/%s/edge_labels.txt' % (data), 'r') as f:
+            with open('/home/ycy/MSSM-GNN/dataset/%s/edge_labels.txt' % (data), 'r') as f:
                 w = f.readlines()
             weights = [int(i) for i in w]
             print("weights:",len(weights))
 
-        with open('dataset/%s/graph_labels.txt' % (data), 'r') as f:
+        with open('/home/ycy/MSSM-GNN/dataset/%s/graph_labels.txt' % (data), 'r') as f:
             l = f.readlines()
         graph_labels = [int(i) for i in l]
         print("labels:", len(graph_labels))
 
-        with open('dataset/%s/node_labels.txt' % (data), 'r') as f:
+        with open('/home/ycy/MSSM-GNN/dataset/%s/node_labels.txt' % (data), 'r') as f:
             nl = f.readlines()
         # print(nl[:10])
         node_labels = [int(i) for i in nl]
