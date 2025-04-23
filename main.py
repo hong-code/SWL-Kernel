@@ -198,7 +198,7 @@ def main():
             torch.backends.cudnn.benchmark = False
             torch.backends.cudnn.deterministic = True
         # train_idx, valid_idx = sep_data(labels[:number_of_graphs], seed)
-        train_idx, valid_idx = sep_data(labels[:number_of_graphs].cpu().numpy(), seed)
+        train_idx, valid_idx = sep_data(labels[:number_of_graphs].cpu().numpy(), seed) #train
         for i in range(10):
             train_index = train_idx[i]
             valid_index = valid_idx[i]
