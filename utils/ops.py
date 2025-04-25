@@ -8,7 +8,7 @@ import gc
 from itertools import product
 
 # --- Gower-Based Star Weisfeiler--Lehman Kernel ---
-
+ 
 def s_numeric(x, y, range_val):
     """
     Gower numeric similarity: 1 - |x-y|/range_val.
@@ -19,7 +19,6 @@ def s_numeric(x, y, range_val):
     if range_val <= 0:
         return 1.0
     return 1 - abs(x - y) / range_val
-
 
 def s_categorical(x, y):
     """
