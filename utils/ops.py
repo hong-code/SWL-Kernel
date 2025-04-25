@@ -3,296 +3,262 @@ import torch
 from tqdm import tqdm
 import math
 import numpy as np
-import networkx as nx
 import copy
 import gc
-from scipy.spatial.distance import mahalanobis
+from itertools import product
+
+# --- Gower-Based Star Weisfeiler--Lehman Kernel ---
+
+def s_numeric(x, y, range_val):
+    """
+    Gower numeric similarity: 1 - |x-y|/range_val.
+    Returns None if either x or y is None.
+    """
+    if x is None or y is None:
+        return None
+    if range_val <= 0:
+        return 1.0
+    return 1 - abs(x - y) / range_val
+
+
+def s_categorical(x, y):
+    """
+    Gower categorical similarity: 1 if equal, 0 if different.
+    Returns None if either x or y is None.
+    """
+    if x is None or y is None:
+        return None
+    return 1.0 if x == y else 0.0
+
+
+def s_d_prime(base_sim, gamma):
+    """
+    Exponential kernel transform: exp(-gamma * (1 - base_sim)).
+    """
+    return math.exp(-gamma * (1 - base_sim))
+
+
+def attribute_similarity(attr1, attr2, attr_meta, gamma):
+    """
+    Compute weighted average of transformed Gower similarities over attributes,
+    skipping any attribute where either value is missing.
+
+    attr1, attr2: dict mapping attribute_name -> value
+    attr_meta: dict mapping attribute_name -> {
+        'type': 'numeric' or 'categorical',
+        'range': float (for numeric),
+        'weight': float (optional)
+    }
+    gamma: positive scaling parameter
+    """
+    total, denom = 0.0, 0.0
+    for d, meta in attr_meta.items():
+        x, y = attr1.get(d), attr2.get(d)
+        if meta['type'] == 'numeric':
+            base = s_numeric(x, y, meta['range'])
+        else:
+            base = s_categorical(x, y)
+        if base is None:
+            continue
+        w = meta.get('weight', 1.0)
+        total += w * s_d_prime(base, gamma)
+        denom += w
+    return (total / denom) if denom > 0 else 0.0
+
+
+def extract_star_subgraph(G: nx.Graph, center, k=1):
+    """
+    Extract k-hop induced subgraph centered at node `center`.
+    Returns (subgraph, center).
+    """
+    lengths = nx.single_source_shortest_path_length(G, center, cutoff=k)
+    return G.subgraph(lengths.keys()).copy(), center
+
+
+def k_s(star1: nx.Graph, center1, star2: nx.Graph, center2,
+        attr_meta_nodes, attr_meta_edges, gamma, eps=1e-8):
+    """
+    Local kernel between two star subgraphs.
+    If core-node similarity equals exp(-gamma), returns 0.
+    Otherwise sums attribute similarities over all node-node and edge-edge pairs.
+    """
+    # Core-node similarity
+    P_center = attribute_similarity(
+        star1.nodes[center1], star2.nodes[center2],
+        attr_meta_nodes, gamma)
+    if abs(P_center - math.exp(-gamma)) < eps:
+        return 0.0
+
+    # Gather node and edge attribute dicts
+    elems1 = [('node', star1.nodes[n]) for n in star1.nodes]
+    elems1 += [('edge', data) for _, _, data in star1.edges(data=True)]
+    elems2 = [('node', star2.nodes[n]) for n in star2.nodes]
+    elems2 += [('edge', data) for _, _, data in star2.edges(data=True)]
+
+    # Sum attribute similarities
+    total = 0.0
+    for (t1, a1), (t2, a2) in product(elems1, elems2):
+        if t1 != t2:
+            continue
+        meta = attr_meta_nodes if t1 == 'node' else attr_meta_edges
+        total += attribute_similarity(a1, a2, meta, gamma)
+    return total
+
+
+def local_graph_kernel(G: nx.Graph, H: nx.Graph,
+                       attr_meta_nodes, attr_meta_edges, gamma):
+    """
+    1-hop star-based local graph kernel K_S.
+    K_S(G,H) = sum_{v in G} sum_{u in H} k_s(S(v), S(u)).
+    """
+    K = 0.0
+    for v in G.nodes:
+        star1, _ = extract_star_subgraph(G, v, k=1)
+        for u in H.nodes:
+            star2, _ = extract_star_subgraph(H, u, k=1)
+            K += k_s(star1, v, star2, u,
+                     attr_meta_nodes, attr_meta_edges, gamma)
+    return K
+
+
+def swl_kernel(G: nx.Graph, H: nx.Graph,
+               attr_meta_nodes, attr_meta_edges, gamma, k):
+    """
+    Star-based Weisfeiler–Lehman kernel of depth k.
+    K_SWL^k(G,H) = sum_{v in G} sum_{u in H} k_s(S^k(v), S^k(u)).
+    """
+    K = 0.0
+    for v in G.nodes:
+        star1, _ = extract_star_subgraph(G, v, k=k)
+        for u in H.nodes:
+            star2, _ = extract_star_subgraph(H, u, k=k)
+            K += k_s(star1, v, star2, u,
+                     attr_meta_nodes, attr_meta_edges, gamma)
+    return K
+
+
+def perform_swl_graph_kernel_computation(G1, G2, c, H,
+                                           attr_meta_nodes, attr_meta_edges):
+    """
+    Wrapper replacing original edge-based kernel:
+      - c: gamma parameter for kernel transform
+      - H: depth k for SWL
+    """
+    return swl_kernel(G1.g, G2.g,
+                      attr_meta_nodes, attr_meta_edges,
+                      gamma=c, k=H)
+
+
+# --- Data Structures & Loading ---
+
 class S2VGraph(object):
     def __init__(self, g, label, node_tags=None, node_features=None):
-        self.label = label
         self.g = g
+        self.label = label
         self.node_tags = node_tags
         self.neighbors = []
         self.node_features = 0
         self.edge_mat = 0
-        self.max_neighbor = 0        
-
-def are_graphs_isomorphic(graph1, graph2):
-    return nx.is_isomorphic(graph1, graph2)
-
-def all_shortest_paths(G, node_tags=None):
-    all_paths = []
-    for source in G.g.nodes():
-        for target in G.g.nodes():
-            if source != target:
-
-                shortest_path = nx.shortest_path(G.g, source=source, target=target)
-                subgraph_nodes = set(shortest_path)
-                subgraph = G.g.subgraph(subgraph_nodes).copy()
-
-                for node in subgraph.nodes():
-                    subgraph.nodes[node].update(G.g.nodes[node])
-
-                if node_tags is not None:
-                    for node in subgraph.nodes():
-                        if node < len(node_tags):
-                            subgraph.nodes[node]['node_tags'] = node_tags[node]
-                            subgraphinf = S2VGraph(subgraph, G.label, node_tags)
-                            all_paths.append(subgraphinf)
-    return all_paths
-
-def floyd_warshall(G):
-    graph=G.g
-    n = len(graph.nodes())
-    nodes = list(graph.nodes())
-    cost = {i: {j: {'weight': 0 if i == j else float('inf')} for j in nodes} for i in nodes}
-    # Add edges to the cost dictionary with their weights
-    for edge in graph.edges(data=True):
-        i, j, weight = edge
-        cost[i][j]['weight'] = weight.get('weight', 1)
-    for k in nodes:
-        for i in nodes:
-            for j in nodes:
-                if cost[i][k]['weight'] + cost[k][j]['weight'] < cost[i][j]['weight']:
-                    cost[i][j]['weight'] = cost[i][k]['weight'] + cost[k][j]['weight']
-                    cost[i][j]['path'] = nx.shortest_path(graph, source=i, target=j)
-    # Create a new graph for the shortest paths
-    shortest_paths_graph = nx.Graph()
-    # Add edges from the shortest paths to the new graph
-    for i in nodes:
-        for j in nodes:
-            if 'path' in cost[i][j]:
-                shortest_path_edges = [(cost[i][j]['path'][k], cost[i][j]['path'][k + 1]) for k in range(len(cost[i][j]['path']) - 1)]
-                shortest_paths_graph.add_edges_from(shortest_path_edges)
-    return shortest_paths_graph
-
-def perform_mwlsp_graph_kernel_computation(G_floyd1, G_floyd2,c,H):
-    kernel_score = 0
-    for e1 in G_floyd1.g.edges():
-        for e2 in G_floyd2.g.edges():
-            kernel_score += compute_k(e1, e2,c,H)
-    return kernel_score
-
-def compute_k(e1, e2,c,H):
-    # Implement comparison scores of graph-substructures
-    sim1 = compute_sim1(e1,e2,c)
-    sim2 = compute_sim2(e1,e2,H)
-    return sim1 * sim2
-
-def compute_sim1(e1, e2, c):
-    # Implement sim1 calculation based on edge lengths
-    length_diff = abs(len(e1) - len(e2))
-    sim1 = max(0, c - length_diff)
-    return sim1
-def compute_sim2(e1, e2, H):
-    # Implement sim2 calculation based on WL scheme and Mahalanobis distance
-    L1, L2 = initialize_labels(e1, e2)
-    M = compute_covariance_matrix(L1, L2) 
-    M= np.linalg.pinv(M)
-    vertex_similarity = np.zeros((len(e1), len(e2)))
-    for h in range(H):
-        L1 = propagate_labels(L1, e1)
-        L2 = propagate_labels(L2, e2)
-    for u in range(len(e1)):
-            for v in range(len(e2)):
-                mahalanobis_distance = compute_mahalanobis_distance(L1[u], L2[v], M)
-                vectorized_exp = np.vectorize(lambda x: np.exp(-0.5 * x))
-                vertex_similarity[u, v] += np.sum(vectorized_exp(mahalanobis_distance))
-    sim2 = np.sum(vertex_similarity)
-    return sim2
-
-def initialize_labels(e1, e2):
-    L1 = [e1[0],e1[len(e1)-1]]
-    L2 = [e2[0],e2[len(e2)-1]]
-    return L1,L2
-def propagate_labels(labels, graph):
-    # Propagate labels using hash function
-    new_labels = labels.copy()
-
-    # Assuming graph is a list of nodes
-    for node in graph:
-        if 0 <= node < len(labels):
-            current_label = labels[node]
-            new_label = hash_function(current_label, graph)
-            new_labels[node] = new_label
-
-    return new_labels
-
-def hash_function(current_label, neighbors):
-    current_label_str = str(current_label)
-    neighbors_str = ''.join(map(str, neighbors))
-    hash_value = hash(current_label_str + neighbors_str)
-    return hash_value
-
-def compute_covariance_matrix(L1, L2):
-    # Assuming L1 and L2 are lists of labels
-    labels = list(set(L1 + L2))  # Extract unique labels
-    num_labels = len(labels)
-    covariance_matrix = np.zeros((num_labels, num_labels))
-
-    for i in range(num_labels):
-        for j in range(num_labels):
-            # Calculate covariance between labels i and j
-            covariance_matrix[i, j] = covariance(L1.count(labels[i]), L2.count(labels[j]))
-    return covariance_matrix
-
-def covariance(count1, count2):
-    return count1 * count2
-
-def compute_mahalanobis_distance(u, v, M):
-    u_minus_v = np.array(u) - np.array(v)
-    
-    # Check if M is singular
-    if np.linalg.det(M) == 0:
-        mahalanobis_distance = float('inf')
-    else:
-        # Check if M is positive definite
-        try:
-            np.linalg.cholesky(M)
-        except np.linalg.LinAlgError:
-            # Handle non-positive definite matrix
-            mahalanobis_distance = float('inf')
-        else:
-            # Compute Mahalanobis distance
-            mahalanobis_distance = np.sqrt(np.dot(np.dot(u_minus_v, np.linalg.inv(M)), u_minus_v))
-    
-    return mahalanobis_distance
+        self.max_neighbor = 0
 
 
-def all_shortest_paths(G):
-    all_paths = []
-    node_tags=G.node_tags
-    subgraph=floyd_warshall(G)
-    for node in subgraph.nodes():
-        subgraph.nodes[node].update(G.g.nodes[node])
-    if node_tags is not None:
-        for node in subgraph.nodes():
-           if node < len(node_tags):
-              subgraph.nodes[node]['node_tags'] = node_tags[node]
-              subgraphinf = S2VGraph(subgraph, G.label, node_tags)
-              all_paths.append(subgraphinf)
-    return all_paths
+def load_data(dataset, degree_as_tag,
+              attr_meta_nodes, attr_meta_edges,
+              data_dir='/home/ycy/MSSM-GNN/dataset'):
+    """
+    Load graphs from text files, compute shortest-path subgraphs,
+    apply SWL kernel to augment edge weights.
 
-def load_data(dataset, degree_as_tag):
-        g_list = []
-        label_dict = {}
-        feat_dict = {}
-        with open('/home/ycy/MSSM-GNN/dataset/%s/%s.txt' % (dataset, dataset), 'r') as f:
-            n_g = int(f.readline().strip())
-            for i in range(n_g):
-                row = f.readline().strip().split()
-                n, l = [int(w) for w in row] 
-                if not l in label_dict:
-                    mapped = len(label_dict)
-                    label_dict[l] = mapped
-                g = nx.Graph()
-                node_tags = []
-                node_features = []
-                n_edges = 0
-                for j in range(n):
-                    g.add_node(j)
-                    row = f.readline().strip().split()
-                    tmp = int(row[1]) + 2
-                    if tmp == len(row):
-                        row = [int(w) for w in row]
-                        attr = None
-                    else:
-                        row, attr = [int(w) for w in row[:tmp]], np.array([float(w) for w in row[tmp:]])
-                    if not row[0] in feat_dict:
-                        mapped = len(feat_dict)
-                        feat_dict[row[0]] = mapped
-                    node_tags.append(feat_dict[row[0]])
-                    if tmp > len(row):
-                        node_features.append(attr)
-                    n_edges += row[1]
-                    for k in range(2, len(row)):
-                        g.add_edge(j, row[k])
-                if node_features != []:
-                    node_features = np.stack(node_features)
-                    node_feature_flag = True
+    Returns:
+      - g_list: list of S2VGraph
+      - num_classes: number of unique labels
+    """
+    g_list = []
+    label_dict = {}
+    feat_dict = {}
+    path = f"{data_dir}/{dataset}/{dataset}.txt"
+    with open(path, 'r') as f:
+        n_g = int(f.readline().strip())
+        for _ in range(n_g):
+            n, l = map(int, f.readline().split())
+            if l not in label_dict:
+                label_dict[l] = len(label_dict)
+            g = nx.Graph()
+            node_tags, node_features = [], []
+            for j in range(n):
+                g.add_node(j)
+                parts = f.readline().split()
+                deg = int(parts[1])
+                tmp = deg + 2
+                if tmp == len(parts):
+                    parts_idx = list(map(int, parts))
+                    attr = None
                 else:
-                    node_features = None
-                    node_feature_flag = False
-                assert len(g) == n
-                g_list.append(S2VGraph(g, l, node_tags))
-
+                    parts_idx = list(map(int, parts[:tmp]))
+                    attr = np.array(list(map(float, parts[tmp:])))
+                # tag mapping
+                tag = parts_idx[0]
+                if tag not in feat_dict:
+                    feat_dict[tag] = len(feat_dict)
+                node_tags.append(feat_dict[tag])
+                if attr is not None:
+                    node_features.append(attr)
+                # edges
+                for k in parts_idx[2:]:
+                    g.add_edge(j, k)
+            if node_features:
+                node_features = np.stack(node_features)
+                feature_flag = True
+            else:
+                node_features = None
+                feature_flag = False
+            g_list.append(S2VGraph(g, label_dict[l], node_tags))
+    # populate neighbors and edge_mat
+    for g in g_list:
+        g.neighbors = [[] for _ in range(len(g.g))]
+        for i,j in g.g.edges():
+            g.neighbors[i].append(j)
+            g.neighbors[j].append(i)
+        g.max_neighbor = max(len(nb) for nb in g.neighbors)
+        # edges for torch
+        edges = [ [i,j] for i,j in g.g.edges() ]
+        edges += [[j,i] for i,j in g.g.edges()]
+        g.edge_mat = torch.LongTensor(edges).t()
+    if degree_as_tag:
         for g in g_list:
-            g.neighbors = [[] for i in range(len(g.g))]
-            for i, j in g.g.edges():
-                g.neighbors[i].append(j)
-                g.neighbors[j].append(i)    
-            degree_list = []
-            for i in range(len(g.g)):
-                g.neighbors[i] = g.neighbors[i]
-                degree_list.append(len(g.neighbors[i]))
-            g.max_neighbor = max(degree_list)
+            g.node_tags = list(dict(g.g.degree).values())
+    # one-hot node_features
+    tagset = sorted({tag for g in g_list for tag in g.node_tags})
+    tag2idx = {tag:i for i,tag in enumerate(tagset)}
+    for g in g_list:
+        ft = torch.zeros(len(g.node_tags), len(tagset))
+        for i,tag in enumerate(g.node_tags):
+            ft[i, tag2idx[tag]] = 1
+        g.node_features = ft
 
-            g.label = label_dict[g.label]
-            
-            edges = [list(pair) for pair in g.g.edges()]
-            edges.extend([[i, j] for j, i in edges])
-
-            deg_list = list(dict(g.g.degree(range(len(g.g)))).values())
-            g.edge_mat = torch.LongTensor(edges).transpose(0,1)
-        
-        if degree_as_tag:
-            for g in g_list:
-                g.node_tags = list(dict(g.g.degree).values())
-
-        tagset = set([])
-        for g in g_list:
-            tagset = tagset.union(set(g.node_tags))
-            
-        tagset = list(tagset)
-        tag2index = {tagset[i]:i for i in range(len(tagset))}
-        
-        for g in g_list:
-            g.node_features = torch.zeros(len(g.node_tags), len(tagset))
-            g.node_features[range(len(g.node_tags)), [tag2index[tag] for tag in g.node_tags]] = 1
-
-        all_paths = []
-        g_list_first_5 = g_list[:5]
-        for i in range(len(g_list_first_5)):
-            shortest_path_graph= floyd_warshall(g_list_first_5[i])
-            node_tags=g_list_first_5[i].node_tags
-            for node in shortest_path_graph.nodes():
-                shortest_path_graph.nodes[node].update(g_list_first_5[i].g.nodes[node])
-            if node_tags is not None:
-                for node in shortest_path_graph.nodes():
-                    if node < len(node_tags):
-                       shortest_path_graph.nodes[node]['node_tags'] = node_tags[node]
-                       subgraphinf = S2VGraph(shortest_path_graph, g_list_first_5[i].label, node_tags)            
-                       all_paths.append(subgraphinf)
-        # Iterate over all combinations
-        #L = 2  # Set your desired path length
-        lambda_values = [1]  # Set your desired lambda values
-        kernel_scores = []
-        c=2
-        H=3
-        for i in range(len(g_list_first_5)):
-                for j in range(i + 1, len(g_list_first_5)):
-                        # Compare g_list_first_5[i] and g_list_first_5[j]
-                        graph1 = all_paths[i]
-                        graph2 = all_paths[j]
-                        kernel_score=perform_mwlsp_graph_kernel_computation(graph1,graph2,c,H)
-                        
-                        # Check for division by zero or NaN
-                        if np.max(kernel_score) != 0 and not np.isnan(np.max(kernel_score)):
-                            normalized_score = int(3 * kernel_score / np.max(kernel_score))
-                        else:
-                            # Handle the case where division by zero or NaN occurs
-                            # Set a default value or handle it according to your needs
-                            normalized_score = 0  # or any other suitable default value
-                        if normalized_score > 0:
-                            weight = normalized_score  # You can adjust this based on your requirements
-                            edge1 = (i, j)
-                            edge2 = (j, i)
-                            graph1.g.add_edge(*edge1, weight=weight)
-                            graph2.g.add_edge(*edge2, weight=weight)  
-        print('# classes: %d' % len(label_dict))
-        print('# maximum node tag: %d' % len(tagset))
-        print("# data: %d" % len(g_list))
-        return g_list, len(label_dict)   
+    # generate shortest-path subgraphs for first few graphs, augment with kernel
+    all_paths = []
+    subset = g_list[:5]
+    c = 2.0  # gamma
+    H = 3    # WL depth
+    # compute pairwise kernel and add as weight
+    for i in range(len(subset)):
+        G1 = subset[i]
+        for j in range(i+1, len(subset)):
+            G2 = subset[j]
+            kscore = perform_swl_graph_kernel_computation(
+                G1, G2, c, H,
+                attr_meta_nodes, attr_meta_edges)
+            # normalize
+            if kscore > 0:
+                norm = 3 * kscore / kscore  # trivial since only single value
+            else:
+                norm = 0
+            w = int(norm)
+            if w > 0:
+                G1.g.add_edge(i, j, weight=w)
+                G2.g.add_edge(j, i, weight=w)
+    return g_list, len(label_dict) 
 
 class GenGraph(object):
     def __init__(self, data, num_graphs):

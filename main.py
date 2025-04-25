@@ -162,6 +162,20 @@ def evaluate_dgl(model, graph, features, labels, train_mask, val_mask, edge_weig
 def main():
     CUDA_LAUNCH_BLOCKING=1
     args = get_args()
+    attr_meta_nodes = {
+    # 'node_tags': {
+    #     'type': 'categorical',
+    #     'weight': 1.0
+    # }
+}
+    attr_meta_edges = {
+    # 'weight': {
+    #     'type': 'numeric',
+    #     'range': 1.0,    # 如果你知道真实的 max-min，填入具体数值
+    #     'weight': 1.0
+    }
+
+
     device = torch.device("cuda:" + str(args.device)) if torch.cuda.is_available() else torch.device("cpu")
     if args.data == 'PROTEINS':#标签是1和2
         number_of_graphs = 1113
@@ -173,6 +187,7 @@ def main():
         number_of_graphs = 4110
     elif args.data == 'Mutagenicity':#标签是0和1
         number_of_graphs = 4337
+
     with open('/home/ycy/MSSM-GNN/preprocessed_datasets/' + args.data, 'rb') as input_file:
         g = pickle.load(input_file)
     num_cliques = int(g.number_of_nodes()) - number_of_graphs
@@ -183,7 +198,7 @@ def main():
     g = g.to(device)
     node_features = features.to(device)
     labels =  labels.to(device)
-    graphs, num_classes = load_data(args.data, args.degree_as_tag)
+    graphs, num_classes = load_data(args.data, args.degree_as_tag,attr_meta_nodes, attr_meta_edges)
     print(len(graphs))
     max_val = 0
     best_seed = 14
