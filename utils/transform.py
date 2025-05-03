@@ -94,18 +94,18 @@ def load_data(g_file):
 
 
 if __name__ == '__main__':
-    name = 'PTC_FR'
-    g_file = '/home/znyu/Projects/Mole-GCN-dgl/dataset/%s/%s.txt' % (name, name)
-    id_dict, g_sizes = get_indic('/home/znyu/Projects/Mole-GCN-dgl/dataset/%s/graph_indicator.txt' % (name))
-    labels = get_labels('/home/znyu/Projects/Mole-GCN-dgl/dataset/%s/graph_labels.txt' % (name))
+    name = 'PROTEINS_full'
+    g_file = '/home/ycy/MSSM-GNN/dataset/%s/%s.txt' % (name, name)
+    id_dict, g_sizes = get_indic('/home/ycy/MSSM-GNN/dataset/%s/graph_indicator.txt' % (name))
+    labels = get_labels('/home/ycy/MSSM-GNN/dataset/%s/graph_labels.txt' % (name))
     for i in range(len(labels)):
-        if labels[i] == -1:
+        if labels[i] == 1:
             labels[i] = 0
-        elif labels[i] == +1:
+        elif labels[i] == 2:
             labels[i] = 1
     print(labels)
     trans_graphs(
-        g_file, '/home/znyu/Projects/Mole-GCN-dgl/dataset/%s/A.txt' % (name), labels,
+        g_file, '/home/ycy/MSSM-GNN/dataset/%s/A.txt' % (name), labels,
         id_dict, g_sizes)
     load_data(g_file)
     # print(id_dict)

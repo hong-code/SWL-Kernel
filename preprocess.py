@@ -14,8 +14,8 @@ from utils.ops import load_data
 
 #得到数据集属性
 def get_args():
-    parser = argparse.ArgumentParser(description='Args for graph predition')
-    parser.add_argument('-data', default='MUTAG', help='data folder name')
+    parser = argparse.ArgumentParser(description='Args      for graph predition')
+    parser.add_argument('-data', default='PROTEINS_full', help='data folder name')
     parser.add_argument('-edge_weight', type=bool, default=False, help='If data have edge labels')
     parser.add_argument('-num_graphs', type=int, default=10, help='Number of graphs to use')
     args, _ = parser.parse_known_args()
@@ -64,12 +64,12 @@ g_dgl.edata['weight'] = torch.tensor(wte, dtype=torch.float32)
 # Change graph labels to 0 and 1
 graph_labels = []
 for i in range(len(data.graph_labels)):
-    if data.graph_labels[i] == -1:
-      data.graph_labels[i]=0
-    else:
-     data.graph_labels[i]=1
-    #graph_labels.append(data.graph_labels[i] - 1)
-    graph_labels.append(data.graph_labels[i])
+    # if data.graph_labels[i] == -1:
+    #   data.graph_labels[i]=0
+    # else:
+    #  data.graph_labels[i]=1
+    graph_labels.append(data.graph_labels[i] - 1)
+    # graph_labels.append(data.graph_labels[i])
 #print(graph_labels)
 graph_labels = torch.tensor(graph_labels, dtype=torch.long)
 features, labels = gen_features_labels(graph_labels, g_dgl, graph.num_cliques)

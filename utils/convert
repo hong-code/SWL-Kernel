@@ -1,0 +1,50 @@
+import os
+
+def convert_dd_to_custom_txt(dataset_dir='/home/ycy/MSSM-GNN/dataset/DD', output_file='/home/ycy/MSSM-GNN/dataset/DD.txt'):
+    # 读取基本文件
+    with open(os.path.join(dataset_dir, '/home/ycy/MSSM-GNN/dataset/DD/A.txt'), 'r') as f:
+        edges = [tuple(map(int, line.strip().split(','))) for line in f]
+
+    with open(os.path.join(dataset_dir, '/home/ycy/MSSM-GNN/dataset/DD/graph_indicator.txt'), 'r') as f:
+        graph_indicator = [int(line.strip()) for line in f]
+
+    with open(os.path.join(dataset_dir, '/home/ycy/MSSM-GNN/dataset/DD/graph_labels.txt'), 'r') as f:
+        graph_labels = [int(line.strip()) for line in f]
+
+    with open(os.path.join(dataset_dir, '/home/ycy/MSSM-GNN/dataset/DD/node_labels.txt'), 'r') as f:
+        node_labels = [int(line.strip()) for line in f]
+
+    num_graphs = max(graph_indicator)
+
+    # 节点 id -> 所属图
+    node_to_graph = {}
+    graph_to_nodes = {}
+    for i, g_id in enumerate(graph_indicator):
+        node_to_graph[i + 1] = g_id  # 原始节点从1开始
+        graph_to_nodes.setdefault(g_id, []).append(i + 1)
+
+    # 图 -> 边
+    graph_edges = {i: [] for i in range(1, num_graphs + 1)}
+    for src, dst in edges:
+        g_id = node_to_graph[src]
+        graph_edges[g_id].append((src, dst))
+
+    # 节点索引重映射（图内编号从0开始）
+    with open(output_file, 'w') as out:
+        out.write(f"{num_graphs}\n")
+        for g_id in range(1, num_graphs + 1):
+            nodes = graph_to_nodes[g_id]
+            node_map = {nid: i for i, nid in enumerate(nodes)}
+            n_nodes = len(nodes)
+            label = graph_labels[g_id - 1]
+            out.write(f"{n_nodes} {label}\n")
+
+            # 写入节点标签
+            for nid in nodes:
+                out.write(f"{node_labels[nid - 1]}\n")
+
+            # 写入边（图内编号）
+            for src, dst in graph_edges[g_id]:
+                out.write(f"{node_map[src]} {node_map[dst]}\n")
+
+    print(f"Written to {output_file}")

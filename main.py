@@ -18,11 +18,11 @@ import pickle
 def get_args():
     parser = argparse.ArgumentParser(description='Args for graph predition')
     parser.add_argument('-seed', type=int, default=14, help='seed')
-    parser.add_argument('-data', default='MUTAG', help='data folder name')
+    parser.add_argument('-data', default='PROTEINS_full', help='data folder name')
     parser.add_argument('-num_epochs', type=int, default=100, help='epochs')
-    parser.add_argument('-batch_size', type=int, default=188, help='batch size')
-    parser.add_argument('-lr', type=float, default=0.01, help='learning rate')
-    parser.add_argument('-w_d', type=float, default=0.0005, help='weight decay')
+    parser.add_argument('-batch_size', type=int, default=1113, help='batch size')
+    parser.add_argument('-lr', type=float, default=0.001, help='learning rate')
+    parser.add_argument('-w_d', type=float, default=.0005, help='weight decay')
     parser.add_argument('-l_num', type=int, default=4, help='layer num')
     parser.add_argument('-h_dim', type=int, default=16, help='hidden dim')
     parser.add_argument('-drop_n', type=float, default=0.5, help='drop net')
@@ -187,7 +187,15 @@ def main():
         number_of_graphs = 4110
     elif args.data == 'Mutagenicity':#标签是0和1
         number_of_graphs = 4337
-
+    elif args.data == 'BZR':#标签是1和2
+        number_of_graphs = 405
+    elif args.data == 'DD':#标签是1和2
+        number_of_graphs = 1178
+    elif args.data == 'COX2':#标签是1和2
+        number_of_graphs = 467   
+    elif args.data == 'PROTEINS_full':#标签是1和2
+        number_of_graphs = 1113     
+            
     with open('/home/ycy/MSSM-GNN/preprocessed_datasets/' + args.data, 'rb') as input_file:
         g = pickle.load(input_file)
     num_cliques = int(g.number_of_nodes()) - number_of_graphs
